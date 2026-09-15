@@ -1,0 +1,107 @@
+package CanFrame where
+
+-- 帧格式（Bosch CAN 2.0 Part B 3.2.1）：解开位填充之后第几位是哪个字段。
+--
+--   标准帧  SOF · ID-28…ID-18 · RTR · IDE · r0 · DLC · 数据
+--   扩展帧  SOF · ID-28…ID-18 · SRR · IDE · ID-17…ID-0 · RTR · r1 · r0 · DLC · 数据
+--
+-- 发送方把帧起始到数据场一次拼进 103 位（layout），高位先发；接收方逐位移进来，收齐后
+-- 按同一张表拆回去（parse）。发与收是两个函数，编译期拿几帧样例互相核一遍，哪边抄错一格
+-- 都编不过。
+
+import qualified Vector
+import qualified List
+
+struct Frame =
+    ext     :: Bool
+    rtr     :: Bool
+    ident   :: Bit 29                  -- ID-28 在最高位；标准帧只用 28:18
+    dlc     :: Bit 4
+    payload :: Vector.Vector 8 (Bit 8)
+  deriving (Bits, Eq, FShow)
+
+hdrLen :: Bool -> UInt 7
+hdrLen e = if e then 39 else 19
+
+-- 远程帧没有数据场（3.2.2）；DLC 大于 8 规范只说不许用，收的时候按 8 个字节
+payloadBytes :: Bool -> Bit 4 -> UInt 7
+payloadBytes r d = if r then 0 else if d > 8 then 8 else unpack (zeroExtend d)
+
+crcStart :: Bool -> Bool -> Bit 4 -> UInt 7
+crcStart e r d = hdrLen e + 8 * payloadBytes r d
+
+layout :: Frame -> Bit 103
+layout f =
+  let i :: Bit 29
+      i = f.ident
+      base :: Bit 11
+      base = i[28:18]
+      low :: Bit 18
+      low = i[17:0]
+      r :: Bit 1
+      r = pack f.rtr
+      d :: Bit 64
+      d = pack (Vector.reverse f.payload)
+      sf :: Bit 83
+      sf = (0 :: Bit 1) ++ base ++ r ++ (0 :: Bit 2) ++ f.dlc ++ d
+      xf :: Bit 103
+      xf = (0 :: Bit 1) ++ base ++ (3 :: Bit 2) ++ low ++ r ++ (0 :: Bit 2) ++ f.dlc ++ d
+  in  if f.ext then xf else sf ++ (0 :: Bit 20)
+
+-- sh 是接收方的移位寄存器：收了 n 位，帧起始在第 n-1 位，最后到的一位在第 0 位
+parse :: UInt 7 -> Bit 103 -> Frame
+parse n sh =
+  let a :: Bit 103
+      a = sh << (103 - n)
+      e :: Bool
+      e = a[89:89] == 1
+      base :: Bit 11
+      base = a[101:91]
+      low :: Bit 18
+      low = if e then a[88:71] else 0
+      d :: Bit 64
+      d = if e then a[63:0] else a[83:20]
+  in  Frame { ext = e;
+              rtr = (if e then a[70:70] else a[90:90]) == 1;
+              ident = base ++ low;
+              dlc = if e then a[67:64] else a[87:84];
+              payload = Vector.reverse (unpack d) }
+
+-- 接收方拆出来的帧长这样：标准帧低 18 位是 0，没发的字节是 0
+canon :: Frame -> Frame
+canon f =
+  let n :: UInt 7
+      n = payloadBytes f.rtr f.dlc
+      i :: Bit 29
+      i = f.ident
+      keep :: Integer -> Bit 8
+      keep k = if fromInteger k < n then (Vector.!!) f.payload k else 0
+  in  Frame { ext = f.ext; rtr = f.rtr;
+              ident = if f.ext then i else i[28:18] ++ (0 :: Bit 18);
+              dlc = f.dlc; payload = Vector.genWith keep }
+
+roundTrip :: Frame -> Bool
+roundTrip f =
+  let n :: UInt 7
+      n = crcStart f.ext f.rtr f.dlc
+  in  parse n (layout f >> (103 - n)) == canon f
+
+sample :: Bool -> Bool -> Bit 29 -> Bit 4 -> Frame
+sample e r i d = Frame { ext = e; rtr = r; ident = i; dlc = d;
+                         payload = Vector.genWith (\ k -> fromInteger (0x5A + 17 * k)) }
+
+-- 标准与扩展、数据与远程、DLC 0、8 与大于 8 各占一帧
+samples :: List Frame
+samples = Cons (sample False False 0x048D159 2)
+         (Cons (sample True  False 0x1ABCDE5 8)
+         (Cons (sample False True  0x0F12345 3)
+         (Cons (sample True  True  0x0000001 0)
+         (Cons (sample False False 0x1FFFFFFF 15) Nil))))
+
+formatAgrees :: Bool
+formatAgrees = List.all roundTrip samples
+
+-- 发送方从这里取位：发与收的位置表对不上就不让编
+txBits :: Frame -> Bit 103
+txBits f = if formatAgrees then layout f
+           else error "CanFrame: layout and parse disagree on where the fields are"

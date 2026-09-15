@@ -1,0 +1,52 @@
+package CanFault where
+
+-- 故障界定（Bosch CAN 2.0 Part B 第 8 节）。引擎在采样点上认出这一位触发了哪条规则，
+-- 交给 bump；主动、消极、总线关闭由计数器算出来（规则 9、10、11），不另存状态，
+-- 也就不会与计数器对不上。一个采样点上至多一条规则成立，所以一次只进一个事件。
+
+struct Counts =
+    tec :: UInt 9
+    rec :: UInt 8
+  deriving (Bits, Eq, FShow)
+
+data Mode = Active | Passive | BusOff
+  deriving (Bits, Eq, FShow)
+
+data Event
+    = RxError          -- 规则 1
+    | RxDomAfterFlag   -- 规则 2
+    | TxError          -- 规则 3；两个例外由引擎决定不发这个事件
+    | TxFlagBitError   -- 规则 4
+    | RxFlagBitError   -- 规则 5
+    | TxDomRun         -- 规则 6，发送方
+    | RxDomRun         -- 规则 6，接收方
+    | TxOk             -- 规则 7
+    | RxOk             -- 规则 8
+    | Recovered        -- 规则 12
+  deriving (Bits, Eq, FShow)
+
+-- 到 256 就是总线关闭（规则 10），再往上记没有意义；REC 封在 255
+addT :: UInt 9 -> UInt 9 -> UInt 9
+addT a n = if a > 256 - n then 256 else a + n
+
+addR :: UInt 8 -> UInt 8 -> UInt 8
+addR a n = if a > 255 - n then 255 else a + n
+
+bump :: Event -> Counts -> Counts
+bump RxError        c = Counts { tec = c.tec;        rec = addR c.rec 1 }
+bump RxDomAfterFlag c = Counts { tec = c.tec;        rec = addR c.rec 8 }
+bump TxError        c = Counts { tec = addT c.tec 8; rec = c.rec }
+bump TxFlagBitError c = Counts { tec = addT c.tec 8; rec = c.rec }
+bump RxFlagBitError c = Counts { tec = c.tec;        rec = addR c.rec 8 }
+bump TxDomRun       c = Counts { tec = addT c.tec 8; rec = c.rec }
+bump RxDomRun       c = Counts { tec = c.tec;        rec = addR c.rec 8 }
+bump TxOk           c = Counts { tec = if c.tec == 0 then 0 else c.tec - 1; rec = c.rec }
+-- 大于 127 时规范只说置回 119 到 127 之间，取 127
+bump RxOk           c = Counts { tec = c.tec;
+                                 rec = if c.rec == 0 then 0 else if c.rec > 127 then 127 else c.rec - 1 }
+bump Recovered      _ = Counts { tec = 0; rec = 0 }
+
+mode :: Counts -> Mode
+mode c = if c.tec >= 256 then BusOff
+         else if c.tec >= 128 || c.rec >= 128 then Passive
+         else Active

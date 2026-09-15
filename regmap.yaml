@@ -1,0 +1,106 @@
+ip: can
+contract: { aw: 8, dw: 32 }
+base: 0x10015000
+size: 0x100
+regs:
+  - name: ctrl
+    offset: 0x00
+    desc: take part in the bus; interrupt enable
+    fields:
+      - { name: en,  bits: "0:0", sw: rw, hw: r, reset: 0 }
+      - { name: ien, bits: "1:1", sw: rw, hw: r, reset: 0 }
+  # 每个值都是实际值减一。复位按 100 MHz、500 kbit/s：10 拍一个时间份额，1 + 13 + 6 = 20 份，采样点 70%
+  - name: btr
+    offset: 0x04
+    desc: bit timing, each value minus one
+    fields:
+      - { name: brp, bits: "7:0",   sw: rw, hw: r, reset: 9 }
+      - { name: ts1, bits: "11:8",  sw: rw, hw: r, reset: 12 }
+      - { name: ts2, bits: "14:12", sw: rw, hw: r, reset: 5 }
+      - { name: sjw, bits: "17:16", sw: rw, hw: r, reset: 1 }
+  # state：0 主动 · 1 消极 · 2 总线关闭。lec 照 Bosch C_CAN：1 填充 · 2 格式 · 3 应答 · 4 发隐性见显性 · 5 发显性见隐性 · 6 CRC
+  - name: status
+    offset: 0x08
+    desc: fault confinement state, pending transmission, bus idle and the last error code
+    fields:
+      - { name: state,  bits: "1:0", sw: r, hw: w, volatile: true }
+      - { name: txpend, bits: "2:2", sw: r, hw: w, volatile: true }
+      - { name: idle,   bits: "3:3", sw: r, hw: w, volatile: true }
+      - { name: lec,    bits: "7:4", sw: r, hw: w, volatile: true }
+  - name: errcnt
+    offset: 0x0C
+    desc: transmit and receive error counts
+    fields:
+      - { name: tec, bits: "8:0",   sw: r, hw: w, volatile: true }
+      - { name: rec, bits: "23:16", sw: r, hw: w, volatile: true }
+  - name: txid
+    offset: 0x10
+    desc: identifier of the frame to send; a standard identifier sits in 28:18
+    fields:
+      - { name: id,  bits: "28:0",  sw: rw, hw: r, reset: 0 }
+      - { name: ext, bits: "29:29", sw: rw, hw: r, reset: 0 }
+      - { name: rtr, bits: "30:30", sw: rw, hw: r, reset: 0 }
+  - name: txdlc
+    offset: 0x14
+    desc: data length code of the frame to send
+    fields: [ { name: val, bits: "3:0", sw: rw, hw: r, reset: 0 } ]
+  - name: txd0
+    offset: 0x18
+    desc: data bytes 0 to 3 of the frame to send, byte 0 in 7:0
+    fields: [ { name: val, width: 32, sw: rw, hw: r, reset: 0 } ]
+  - name: txd1
+    offset: 0x1C
+    desc: data bytes 4 to 7 of the frame to send
+    fields: [ { name: val, width: 32, sw: rw, hw: r, reset: 0 } ]
+  # 已经有帧待发时再写 tx 不算。swmod 只说「这个寄存器被写过」，不看写的值，两个命令都带 wrdata，写 1 才算
+  - name: cmd
+    offset: 0x20
+    desc: request a transmission, or abort the pending one
+    fields:
+      - { name: tx,    bits: "0:0", sw: w, hw: na, swmod: true, wrdata: true, reset: 0 }
+      - { name: abort, bits: "1:1", sw: w, hw: na, swmod: true, wrdata: true, reset: 0 }
+  - name: rxid
+    offset: 0x24
+    desc: identifier of the last frame received
+    fields:
+      - { name: id,  bits: "28:0",  sw: r, hw: w, volatile: true }
+      - { name: ext, bits: "29:29", sw: r, hw: w, volatile: true }
+      - { name: rtr, bits: "30:30", sw: r, hw: w, volatile: true }
+  - name: rxdlc
+    offset: 0x28
+    desc: data length code of the last frame received
+    fields: [ { name: val, bits: "3:0", sw: r, hw: w, volatile: true } ]
+  - name: rxd0
+    offset: 0x2C
+    desc: data bytes 0 to 3 of the last frame received
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+  - name: rxd1
+    offset: 0x30
+    desc: data bytes 4 to 7 of the last frame received
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+  # 屏蔽位为 1 才比；屏蔽全 0 就全收
+  - name: fid
+    offset: 0x34
+    desc: acceptance filter identifier
+    feature: filter
+    fields:
+      - { name: id,  bits: "28:0",  sw: rw, hw: r, reset: 0 }
+      - { name: ext, bits: "29:29", sw: rw, hw: r, reset: 0 }
+  - name: fmask
+    offset: 0x38
+    desc: acceptance filter mask, one means compare
+    feature: filter
+    fields:
+      - { name: id,  bits: "28:0",  sw: rw, hw: r, reset: 0 }
+      - { name: ext, bits: "29:29", sw: rw, hw: r, reset: 0 }
+  - name: events
+    offset: 0x3C
+    desc: sticky events, write one to clear
+    fields:
+      - { name: txok,    bits: "0:0", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: rxok,    bits: "1:1", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: err,     bits: "2:2", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: passive, bits: "3:3", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: busoff,  bits: "4:4", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: arblost, bits: "5:5", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }
+      - { name: rxover,  bits: "6:6", sw: rw, onwrite: woclr, hw: r, hwset: true, stickybit: true, reset: 0 }

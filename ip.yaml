@@ -1,0 +1,74 @@
+name: can
+version: 0.1.0
+spec: '0.1'
+kind: ip
+lang:
+- bsv
+- bh
+identity:
+  slug: can-tapeout-bsv
+  display_name: CAN 2.0B controller
+  summary: Classical CAN 2.0B controller with standard and extended frames, 
+    automatic retransmission, fault confinement and one acceptance filter.
+  category: peripheral
+  subcategories:
+  - can
+  ip_family: can
+  integration_profile:
+  - apb4-slave
+  maturity: simulated
+contract:
+  version: 1
+  ctrl:
+    shape: flat
+    aw: 8
+    dw: 32
+  irq:
+  - name: irq
+    kind: level
+params: {}
+features:
+  # 一组验收滤波（Part B 第 4 节「可选的屏蔽寄存器」）。关掉就收下所有帧，应答照发
+  filter:
+    type: bool
+    default: true
+    area:
+      fixed: 960.96
+emit:
+- kind: bsv
+  package: Can
+  module: mkCan
+  config_type: CanCfg
+  interface: CanIfc
+  ctrl: regs
+  pins:
+  - name: pins
+    type: CanPins
+- kind: verilog-flat
+  bus: apb4
+deps:
+  hwcore: ^0.1
+  amba: ^0.1
+area:
+  base:
+    fixed: 11205.6
+  margin: 0.0
+  model: points-additive
+  error:
+    bound: 0.0
+    sign: over
+    note: first measured by ran recal --init; every configuration is on the grid
+  measured:
+  - at:
+      filter: false
+    um2: 11205.6
+  - at:
+      filter: true
+    um2: 12166.56
+  corner:
+    tool: ecc
+    pdk: ics55
+    freq_mhz: 100
+    measured: '2026-09-16'
+    toolchain: bsc 2026.01 · yosys 0.68+195 · ecc 0.1.0a11
+    gen_digest: sha256:de002e701831379e
