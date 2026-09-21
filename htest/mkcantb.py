@@ -414,7 +414,7 @@ verdict = ("standard, extended and remote frames are received and acknowledged, 
 
 TEMPLATE = r'''package Can@L@Tb;
 
-// 由 tb/mkcantb.py 生成，勿手改。这一点：filter=@FILT@
+// 由 htest/mkcantb.py 生成，勿手改。这一点：filter=@FILT@
 
 import StmtFSM::*;
 import Vector::*;
